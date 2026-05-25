@@ -1,0 +1,49 @@
+##Snakefile ##
+###SNAKEFILE###
+
+SPECIES = [
+    "lys_bel",
+    "ito_sal",
+    "pol_ica",
+    "pie_nap",
+    "hel_tim",
+    "hel_cyd",
+    "hel_mel",
+    "hel_num", 
+    "pap_mac",
+    "pap_hos",
+    "ant_car",
+    "mel_gal",
+    "mel_pho"
+]
+
+POP = ["POP1", "POP2"]
+
+rule all:
+    input:
+        expand("sliding_windows/{species}.{Pop}.quantiles.SlidingWindow100k-1M.txt", species=SPECIES, Pop=POP),
+        expand("sliding_windows/{species}.{Pop}.PREDICT.BSCORRECTED.SlidingWindow100k-1M.txt", species=SPECIES, Pop=POP)
+
+rule sliding_window_quantiles:
+    input:
+        "{species}.var.biallelic.fmiss80.renamed.{Pop}.quantiles.tsv"
+    output:
+        "sliding_windows/{species}.{Pop}.quantiles.SlidingWindow100k-1M.txt"
+    params:
+        window = 1000000,
+        slide = 100000
+    shell:
+        """ python SlidingWindowRecombRelative.py -i {input} -o {output} -w {params.window} -s {params.slide} """
+
+rule sliding_window_absolute:
+    input:
+        "{species}.var.biallelic.fmiss80.renamed.{Pop}.PREDICT.BSCORRECTED.txt"
+    output:
+        "sliding_windows/{species}.{Pop}.PREDICT.BSCORRECTED.SlidingWindow100k-1M.txt"
+    params:
+        window = 1000000,
+        slide = 100000
+    shell:
+        """ python SlidingWindowRecomb.py -i {input} -o {output} -w {params.window} -s {params.slide} """
+
+        
