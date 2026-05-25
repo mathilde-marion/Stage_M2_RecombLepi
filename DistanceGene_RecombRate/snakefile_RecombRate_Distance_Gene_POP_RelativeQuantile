@@ -1,0 +1,95 @@
+##Snakefile
+##SNAKEFILE
+
+with open("../scripts/species.txt") as f:
+    SPECIES = [line.strip() for line in f if line.strip()]
+POP = ["POP2", "POP1"]
+
+BIN_SIZE = 1000
+
+rule all:
+    input:
+        expand("{species}.{Pop}/stats_by_category_refined.tsv", species=SPECIES, Pop=POP),
+        expand("{species}.{Pop}/stats_by_category_refined_quantile.tsv", species=SPECIES, Pop=POP),
+        expand("{species}.{Pop}/permutations/permutation_null_model.tsv", species=SPECIES, Pop=POP),
+        expand("{species}.{Pop}/permutations_quantile/permutation_null_model_quantile.tsv", species=SPECIES, Pop=POP),
+        expand("{species}.{Pop}/recomb_relative_bins_absolute.tsv", species=SPECIES, Pop=POP),
+        expand("{species}.{Pop}/recomb_relative_bins_quantile.tsv", species=SPECIES, Pop=POP)
+
+rule recomb_distance_gene_quantile:
+    input:
+        gff = "../genomes_ref_annotations_blast/{species}/{species}.genes.gff3.gz",
+        recomb = "../OutputRelernnCluster/{species}.var.biallelic.fmiss80.renamed.{Pop}.quantiles.tsv"
+    output: 
+        "{species}.{Pop}/stats_by_category_refined_quantile.tsv",
+        "{species}.{Pop}/stats_by_category_quantile.tsv",
+        "{species}.{Pop}/tmp_04_genes_final_quantile.tsv",
+        "{species}.{Pop}/tmp_02_recomb_quantile.tsv"
+    params:
+        outdir = "{species}.{Pop}",
+        bin_size = BIN_SIZE
+    shell:
+        """ python RecombinationRateRelativeQuantile_DistanceGene_snakemake.py --gff {input.gff} --recomb {input.recomb} --outdir {params.outdir} --bin_size {params.bin_size} """
+
+rule recomb_distance_gene:
+    input:
+        gff = "../genomes_ref_annotations_blast/{species}/{species}.genes.gff3.gz",
+        recomb = "../OutputRelernnCluster/{species}.var.biallelic.fmiss80.renamed.{Pop}.PREDICT.BSCORRECTED.txt"
+    output: 
+        "{species}.{Pop}/stats_by_category_refined.tsv",
+        "{species}.{Pop}/stats_by_category.tsv",
+        "{species}.{Pop}/tmp_04_genes_final.tsv",
+        "{species}.{Pop}/tmp_02_recomb.tsv"
+    params:
+        outdir = "{species}.{Pop}",
+        bin_size = BIN_SIZE
+    shell:
+        """ python RecombinationRate_DistanceGene_snakemake.py --gff {input.gff} --recomb {input.recomb} --outdir {params.outdir} --bin_size {params.bin_size} """
+
+rule permutations_gene:
+    input:
+        gene="{species}.{Pop}/tmp_04_genes_final.tsv",
+        recomb="{species}.{Pop}/tmp_02_recomb.tsv"
+    output:
+        "{species}.{Pop}/permutations/permutation_null_model.tsv"
+    params:
+        outdir="{species}.{Pop}/permutations",
+        bin_size=BIN_SIZE,
+        perm=50
+    shell:
+        """ python permutations_null_model_snakemake.py --genes {input.gene} --recomb {input.recomb} --outdir {params.outdir} --bin_size {params.bin_size} --n_perm {params.perm} """
+
+rule permutations_gene_quantile:
+    input:
+        gene="{species}.{Pop}/tmp_04_genes_final_quantile.tsv",
+        recomb="{species}.{Pop}/tmp_02_recomb_quantile.tsv"
+    output:
+        "{species}.{Pop}/permutations_quantile/permutation_null_model_quantile.tsv"
+    params:
+        outdir="{species}.{Pop}/permutations_quantile",
+        bin_size=BIN_SIZE,
+        perm=50
+    shell:
+        """ python permutations_null_model_quantile_snakemake.py --genes {input.gene} --recomb {input.recomb} --outdir {params.outdir} --bin_size {params.bin_size} --n_perm {params.perm} """
+
+rule relative_recomb_bins:
+    input:
+        genes = "{species}.{Pop}/tmp_04_genes_final.tsv",
+        recomb = "{species}.{Pop}/tmp_02_recomb.tsv"
+    output:
+        "{species}.{Pop}/recomb_relative_bins_absolute.tsv"
+    params:
+        bins = 10
+    shell:
+        """ python RecombinationRate_RelativeBinGeneLength_absolute.py --genes {input.genes} --recomb {input.recomb} --out {output} --bins {params.bins} """
+
+rule relative_recomb_bins_quantile:
+    input:
+        genes  = "{species}.{Pop}/tmp_04_genes_final_quantile.tsv",
+        recomb = "{species}.{Pop}/tmp_02_recomb_quantile.tsv"
+    output:
+        "{species}.{Pop}/recomb_relative_bins_quantile.tsv"
+    params:
+        bins = 10
+    shell:
+        """ python RecombinationRate_RelativeBinGeneLength_quantile.py --genes {input.genes} --recomb {input.recomb} --out {output} --bins {params.bins} """
