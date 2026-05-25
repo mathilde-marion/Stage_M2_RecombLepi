@@ -1,0 +1,240 @@
+##Snakefile ##
+###SNAKEFILE###
+
+# Pour les nouvelles sp, penser a modifier le snpEff.config (sinon snpEff ne trouve pas les sp) 
+
+with open("scripts_snakemake/species_snpEff.txt") as f:
+    SPECIES = [line.strip() for line in f if line.strip()]
+POP = ["POP1", "POP2"]
+
+SNPEFF_DIR = "/bettik/PROJECTS/pr-drive-r/mariomat/snpEff"
+
+rule all :
+    input:
+        expand(SNPEFF_DIR + "/{species}/genes.gff", species=SPECIES),
+        expand(SNPEFF_DIR + "/{species}/sequences.fa", species=SPECIES),
+        expand(SNPEFF_DIR + "/{species}/snpEffectPredictor.bin", species=SPECIES),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.ann.vcf", species=SPECIES, Pop=POP),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.nonsyn.vcf", species=SPECIES, Pop=POP),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.syn.vcf", species=SPECIES, Pop=POP),
+        expand(SNPEFF_DIR + "/{species}/{species}.genes.bed", species=SPECIES),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb.bed", species=SPECIES, Pop=POP),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.intersect.tsv", species=SPECIES, Pop=POP),
+        expand(SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb_by_gene.tsv", species=SPECIES, Pop=POP),
+        expand("pNpS/{species}.{Pop}.pNpS_recombRate.tsv", species=SPECIES, Pop=POP),
+        expand("pNpS/{species}.{Pop}.pNpS_recombRate_plot.png", species=SPECIES, Pop=POP),
+        expand("piNpiS/{species}.potentialNSnumber.tsv", species=SPECIES, Pop=POP),
+        expand("piNpiS/{species}.{Pop}.piNpiS_summary_per_gene.tsv", species=SPECIES, Pop=POP),
+        expand("piNpiS/{species}.{Pop}.final_ratiopiNpiS_recomb.tsv", species=SPECIES, Pop=POP)
+
+rule lien_fichier:
+    input:
+        gff="{species}/{species}.genes.gff3",
+        fasta="{species}/{species}.unmasked.fa"
+    output:
+        gff=SNPEFF_DIR + "/{species}/genes.gff",
+        fa=SNPEFF_DIR + "/{species}/sequences.fa"
+    params:
+        oar_walltime="00:12:00",
+        oar_resources="nodes=1/core=1"
+    shell: 
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ mkdir -p {SNPEFF_DIR}/{wildcards.species} ;"""
+        """ ln -sf $(realpath {input.gff}) {output.gff} ;"""
+        """ ln -sf $(realpath {input.fasta}) {output.fa} """
+
+rule build_database:
+    input:
+        gff=SNPEFF_DIR + "/{species}/genes.gff",
+        fasta=SNPEFF_DIR + "/{species}/sequences.fa"
+    output:
+        SNPEFF_DIR + "/{species}/snpEffectPredictor.bin"
+    params:
+        oar_walltime="00:20:00",
+        oar_resources="nodes=1/core=4"
+    shell: 
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ snpEff build -gff3 -v -noCheckCds -noCheckProtein -c snpEff.config {wildcards.species} """
+
+rule annotation:
+    input: 
+        vcf="/bettik/PROJECTS/pr-drive-r/mariomat/vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz",
+        snpeff_bin=SNPEFF_DIR + "/{species}/snpEffectPredictor.bin"
+    output:
+        SNPEFF_DIR + "/{species}/{species}.{Pop}.ann.vcf"
+    params:
+        oar_walltime="48:00:00",
+        oar_resources="nodes=1/"
+    shell: 
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ snpEff ann -c snpEff.config {wildcards.species} {input.vcf} > {output} """
+
+rule extract_synonymous:
+    input:
+        vcf = SNPEFF_DIR + "/{species}/{species}.{Pop}.ann.vcf"
+    output:
+        SNPEFF_DIR + "/{species}/{species}.{Pop}.syn.vcf"
+    params:
+        oar_walltime="02:45:00",
+        oar_resources="nodes=1/core=8"
+    shell:
+        """ set +u ; """
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        r""" SnpSift filter "( ANN[*].EFFECT has 'synonymous_variant' )" {input.vcf} > {output} """
+
+rule extract_nonsynonymous:
+    input:
+        vcf = SNPEFF_DIR + "/{species}/{species}.{Pop}.ann.vcf"
+    output:
+        SNPEFF_DIR + "/{species}/{species}.{Pop}.nonsyn.vcf"
+    params:
+        oar_walltime="03:45:00",
+        oar_resources="nodes=1/core=8"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        r""" SnpSift filter  "( ANN[*].EFFECT has 'missense_variant' )" {input.vcf} > {output} """
+
+rule genes_gff_to_bed:
+    input:
+        gff=SNPEFF_DIR + "/{species}/genes.gff"
+    output:
+        bed=SNPEFF_DIR + "/{species}/{species}.genes.bed"
+    params:
+        oar_walltime="00:05:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+#        r""" awk -F'\t' '$3=="gene" && $9 !~ /tRNA/{{gene="NA";attr=$9;if(attr~/Name=/){{sub(/^.*Name=/,"",attr);sub(/;.*/,"",attr);gene=attr}}else if(attr~/gene_id=/){{sub(/^.*gene_id=/,"",attr);sub(/;.*/,"",attr);gene=attr}}else if(attr~/ID=/){{sub(/^.*ID=/,"",attr);sub(/;.*/,"",attr);gene=attr}}if(gene!="NA")print $1"\t"$4-1"\t"$5"\t"gene}}' {input.gff} > {output.bed} """
+        r""" awk -F'\t' '$3=="gene"{{gene="NA";attr=$9;{{sub(/^.*ID=/,"",attr);sub(/;.*/,"",attr);gene=attr}}if(gene!="NA")print $1"\t"$4-1"\t"$5"\t"gene}}' {input.gff} > {output.bed} """
+
+rule relernn_to_bed:
+    input:
+        txt="/bettik/PROJECTS/pr-drive-r/mariomat/ResultsReLERNN/{species}.var.biallelic.fmiss80.renamed.{Pop}.quantiles.tsv"
+    output:
+        bed = SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb.bed"
+    params:
+        oar_walltime="00:35:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ python scripts_snakemake/relernn_quantile_to_bed_snakemake.py {input.txt} {output.bed} """
+
+rule recomb_mean_per_gene:
+    input:
+        genes_bed = SNPEFF_DIR + "/{species}/{species}.genes.bed",
+        recomb_bed = SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb.bed"
+    output:
+        intersect = SNPEFF_DIR + "/{species}/{species}.{Pop}.intersect.tsv",
+        tsv = SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb_by_gene.tsv"
+    params:
+        oar_walltime="01:05:00",
+        oar_resources="nodes=1/core=5"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ bedtools intersect -a {input.genes_bed} -b {input.recomb_bed} -wa -wb > {output.intersect} ;"""
+        """ python scripts_snakemake/MeanRecombPerGeneWeighted_snakemake.py {output.intersect} {output.tsv} """
+
+rule compute_pN_pS_recombRate:
+    input:
+        syn = SNPEFF_DIR + "/{species}/{species}.{Pop}.syn.vcf",
+        nonsyn = SNPEFF_DIR + "/{species}/{species}.{Pop}.nonsyn.vcf",
+        recomb = SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb_by_gene.tsv"
+    output:
+        tsv="pNpS/{species}.{Pop}.pNpS_recombRate.tsv"
+    params:
+        oar_walltime="03:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ python scripts_snakemake/compute_pN_pS_recombRate_simple_snakemake.py {input.syn} {input.nonsyn} {output.tsv} {input.recomb} """
+
+rule plot_corr_pNpS_recombRate:
+    input:
+        tsv="pNpS/{species}.{Pop}.pNpS_recombRate.tsv"
+    output:
+        plot="pNpS/{species}.{Pop}.pNpS_recombRate_plot.png"
+    params:
+        oar_walltime="00:10:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ; """
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        r""" Rscript scripts_snakemake/plot_pNpS_recombRate_simple_snakemake.R {input.tsv} {output.plot} """
+        
+rule nb_site_potentiel_N_S:
+    input:
+        fa="{species}/{species}.unmasked.fa",
+        gff="{species}/{species}.genes.gff3"
+    output:
+        "piNpiS/{species}.potentialNSnumber.tsv"
+    params:
+        oar_walltime="00:45:00",
+        oar_resources="nodes=1/core=5"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ python3 scripts_snakemake/CalculatePotentialNSnumber_snakemake.py --fasta {input.fa} --gff3 {input.gff} --output {output} """
+
+rule compute_piN_piS:
+    input:
+        vcf = SNPEFF_DIR + "/{species}/{species}.{Pop}.ann.vcf"
+    output:
+        summary  = "piNpiS/{species}.{Pop}.piNpiS_summary_per_gene.tsv"
+    params:
+        oar_walltime = "15:00:00",
+        oar_resources = "nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ python scripts_snakemake/compute_diversity_piN_piS_snakemake.py {input.vcf} {output.summary}  """
+
+rule merge_piN_piS_ratio_recomb:
+    input:
+        pi="piNpiS/{species}.{Pop}.piNpiS_summary_per_gene.tsv",
+        potentialNS="piNpiS/{species}.potentialNSnumber.tsv",
+        recomb_file=SNPEFF_DIR + "/{species}/{species}.{Pop}.recomb_by_gene.tsv"
+    output:
+        "piNpiS/{species}.{Pop}.final_ratiopiNpiS_recomb.tsv"
+    params:
+        oar_walltime = "00:30:00",
+        oar_resources = "nodes=1/core=2"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ python scripts_snakemake/merge_piN_piS_recomb_snakemake.py {input.pi} {input.potentialNS} {input.recomb_file} {output} """
+
+# La on recupere les /{species}.{Pop}.final_ratiopiNpiS_recomb.tsv avec un scp dans output_piNpiS_cluster pour faire le graphique sur R
