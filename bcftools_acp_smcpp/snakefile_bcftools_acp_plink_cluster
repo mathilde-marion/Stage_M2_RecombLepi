@@ -1,0 +1,127 @@
+##Snakefile ##
+###SNAKEFILE###
+
+with open("scripts/species.txt") as f:
+    SPECIES = [line.strip() for line in f if line.strip()]
+
+rule all :
+    input:
+        expand("vcf_filtered/{species}.var.biallelic.fmiss80.vcf.gz", species=SPECIES),
+        expand("pca/{species}/{species}.pca.pdf", species=SPECIES),
+        expand("pca/{species}/{species}.outliers.txt", species=SPECIES),
+        expand("pca/{species}/{species}.no_outliers.pca.pdf", species=SPECIES),
+        expand("pca/{species}/{species}.no_outliers.pca.tsv", species=SPECIES)
+
+rule bcf_to_vcf:
+    input:
+        "vcf_raw/{species}.norm.bcf"
+    output:
+        "vcf_raw/{species}.raw.vcf.gz"
+    params:
+        oar_walltime="48:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools view {input} -Oz -o {output} ;"""
+        """ bcftools index {output}"""
+
+#rule vcf_clean:
+#    input:
+#        "vcf_raw/{species}.raw.vcf.gz"
+#    output:
+#        vcf="vcf_clean/{species}.clean.vcf.gz",
+#        index="vcf_clean/{species}.clean.vcf.gz.csi"
+#    shell:
+#        r""" bcftools annotate -x ^FORMAT/GT {input} -Oz -o {output.vcf};"""
+#        """ bcftools index {output.vcf}"""
+
+rule filter_vcf:
+    input:
+  #      "vcf_clean/{species}.clean.vcf.gz"
+        "vcf_raw/{species}.raw.vcf.gz"
+    output:
+        "vcf_filtered/{species}.var.biallelic.fmiss80.vcf.gz"
+    params:
+        oar_walltime="18:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools view -i 'AC>0 && AC<AN && F_MISSING<0.2' -m2 -M2 {input} -Oz -o {output} ;"""
+        """ bcftools index {output}"""
+
+rule pca_plink:
+    input:
+        vcf="vcf_filtered/{species}.var.biallelic.fmiss80.vcf.gz"
+    output:
+        eigenvec="pca/{species}/{species}.pca.eigenvec",
+        eigenval="pca/{species}/{species}.pca.eigenval"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=12"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ plink --vcf {input.vcf} --pca 10 --allow-extra-chr --chr-set 70 --out pca/{wildcards.species}/{wildcards.species}.pca """
+#        """ plink --vcf {input.vcf} --pca 10 --double-id --allow-extra-chr --out pca/{wildcards.species}/{wildcards.species}.pca """
+ 
+rule plot_pca_R:
+    input:
+        eigenvec="pca/{species}/{species}.pca.eigenvec",
+        eigenval="pca/{species}/{species}.pca.eigenval"
+    output:
+        pdf="pca/{species}/{species}.pca.pdf",
+        outliers="pca/{species}/{species}.outliers.txt"
+    params:
+        oar_walltime="0:30:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ Rscript scripts/plot_pca_plink_snakemake.R {input.eigenvec} {input.eigenval} {output.pdf} {output.outliers} """
+
+rule pca_no_outliers_plink:
+    input:
+        vcf="vcf_filtered/{species}.var.biallelic.fmiss80.vcf.gz",
+        outliers="pca/{species}/{species}.outliers.txt"
+    output:
+        eigenvec="pca/{species}/{species}.no_outliers.pca.eigenvec",
+        eigenval="pca/{species}/{species}.no_outliers.pca.eigenval",
+        tmp="pca/{species}/{species}.tmp.txt"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=12"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" awk '{{print $1, $1}}' {input.outliers} > {output.tmp} ;""" #pour plink il faut 2x le nom des individus
+        """ plink --vcf {input.vcf} --remove {output.tmp} --pca 10 --allow-extra-chr --chr-set 70 --out pca/{wildcards.species}/{wildcards.species}.no_outliers.pca """
+#        """ plink --vcf {input.vcf} --remove {output.tmp} --pca 10 --double-id --allow-extra-chr --out pca/{wildcards.species}/{wildcards.species}.no_outliers.pca """
+
+rule plot_pca_no_outliers_R:
+    input:
+        eigenvec="pca/{species}/{species}.no_outliers.pca.eigenvec",
+        eigenval="pca/{species}/{species}.no_outliers.pca.eigenval"
+    output:
+        pdf="pca/{species}/{species}.no_outliers.pca.pdf",
+        table="pca/{species}/{species}.no_outliers.pca.tsv"
+    params:
+        oar_walltime="0:30:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ Rscript scripts/plot_pca_plink_no_outliers_snakemake.R {input.eigenvec} {input.eigenval} {output.pdf} {output.table} """

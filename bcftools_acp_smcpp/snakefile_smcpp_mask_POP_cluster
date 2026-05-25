@@ -1,0 +1,300 @@
+##Snakefile ##
+###SNAKEFILE###
+
+with open("scripts/species.txt") as f:
+    SPECIES = [line.strip() for line in f if line.strip()]
+CHROMS = [f"chr{i:02d}" for i in range(1, 11)]
+POP = ["POP1", "POP2"]
+
+def get_distinguished(species, Pop):
+    with open(f"pca/{species}/{species}.{Pop}.selected_IID.txt") as f:
+        return [l.strip() for l in f][:5]
+
+rule all:
+    input:
+        expand("vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz", species=SPECIES, chr=CHROMS, Pop=POP),
+        expand("vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf", species=SPECIES, chr=CHROMS, Pop=POP),
+        expand("mask/{species}/{species}.{Pop}.genome.bed", species=SPECIES, chr=CHROMS, Pop=POP),
+        expand("plot/{species}.{Pop}/Ne_{species}.{Pop}.png", species=SPECIES, chr=CHROMS, Pop=POP),
+        expand("vcf_chr/{species}/{species}_{chr}.vcf.gz.csi", species=SPECIES, chr=CHROMS, Pop=POP),
+        expand("estimate/{species}.{Pop}/model.final.json", species=SPECIES, chr=CHROMS, Pop=POP)
+
+rule filter_vcf_by_population:
+    input:
+        samples="pca/{species}/{species}.{Pop}.selected_IID.txt",
+        vcf="vcf_filtered/{species}.var.biallelic.fmiss80.renamed.vcf.gz"
+    output:
+        vcf="vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools view -S {input.samples} -Oz -o {output.vcf} {input.vcf} ;"""
+        """ bcftools index {output.vcf} """
+
+rule vcf_pop_for_relernn:
+    input:
+        vcf="vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz"
+    output:
+        "vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf"
+    params:
+       oar_walltime="24:00:00",
+       oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools view -Ov -o {output} {input.vcf} """
+
+rule genome_bed_for_relernn:
+    input:
+        vcf="vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz"
+    output:
+        bed="mask/{species}/{species}.{Pop}.genome.bed"
+    params:
+        oar_walltime="04:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r"""bcftools view -h {input.vcf} | awk -F'[=,>]' '/^##contig/ {{print $3"\t0\t"$5}}' > {output.bed}"""
+
+rule variant_good_quality : 
+    input : 
+        "vcf_raw/{species}.raw.renamed.vcf.gz" 
+    output :
+        vcf = "mask/{species}/variant_goodquality.vcf.gz",
+        csi = "mask/{species}/variant_goodquality.vcf.gz.csi"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=10"
+    shell :
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools view -i 'F_MISSING<0.2' -M2 {input} -Oz -o {output.vcf} ;"""
+        """ bcftools index {output.vcf} """
+
+rule good_positions_txt:
+    input:
+        "mask/{species}/variant_goodquality.vcf.gz"
+    output:
+        "mask/{species}/good_positions.txt"
+    params:
+        oar_walltime="40:00:00",
+        oar_resources="nodes=1/core=10"  
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools query -f '%CHROM\t%POS\n' {input} > {output} """
+
+rule mask_positions_bed:
+    input:
+        "mask/{species}/good_positions.txt"
+    output:
+        "mask/{species}/good_positions.bed"
+    params:
+        oar_walltime="02:00:00",
+        oar_resources="nodes=1/core=4"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ awk '{{print $1"\t"$2-1"\t"$2}}' {input} > {output} """
+
+rule mask_genome_sizes:
+    input:
+        "mask/{species}/variant_goodquality.vcf.gz"
+    output:
+        "mask/{species}/genome.size"
+    params:
+        oar_walltime="10:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" bcftools view -h {input} | grep "^##contig" | sed 's/.*ID=\([^,]*\),length=\([0-9]*\).*/\1\t\2/' > {output} """
+
+rule mask_complement:
+    input:
+        bed = "mask/{species}/good_positions.bed",
+        genome = "mask/{species}/genome.size"
+    output:
+        "mask/{species}/{species}.smc_mask.bed"
+    params:
+        oar_walltime="05:00:00",
+        oar_resources="nodes=1/core=4"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bedtools complement -i {input.bed} -g {input.genome} > {output} """
+
+rule mask_bgzip_index:
+    input:
+        "mask/{species}/{species}.smc_mask.bed"
+    output:
+        gz = "mask/{species}/{species}.smc_mask.bed.gz",
+        tbi = "mask/{species}/{species}.smc_mask.bed.gz.tbi"
+    params:
+        oar_walltime="01:00:00",
+        oar_resources="nodes=1/core=4"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bgzip -c {input} > {output.gz} ;"""
+        """ tabix -p bed {output.gz} """
+
+rule mask_check:
+    input:
+        good = "mask/{species}/good_positions.renamed.bed",
+        mask = "mask/{species}/{species}.smc_mask.bed"
+    output:
+        "mask/{species}/{species}.check_ok.txt"
+    params:
+        oar_walltime="00:10:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" 
+        n=$(bedtools intersect -a {input.good} -b {input.mask} | wc -l)
+        if [ "$n" -ne 0 ]; then 
+            echo "Erreur: overlap entre bonnes positions et mask" 
+            exit 1 
+        fi
+        echo "OK" > {output} 
+        """
+
+rule top10contigs : 
+    input:
+        vcf="vcf_filtered/{species}.var.biallelic.fmiss80.renamed.vcf.gz"
+    output:
+#        "smc/{species}/{species}.top{ScaffStart}-ScaffEnd}_contigs.txt"
+        "smc/{species}/{species}.top10_contigs.txt"
+    params:
+        oar_walltime="05:00:00",
+        oar_resources="nodes=1/core=4"
+    shell:
+#        r""" bcftools view -h {input.vcf} | grep "^##contig" | sed 's/.*ID=\([^,]*\),length=\([0-9]*\).*/\1\t\2/' | sort -k2,2nr | head -n 10 | cut -f1 > {output} """ ## ICI TRI PAR ORDRE DE TAILLE DE CHROMOSOMES (donc prends le Z aussi car le plus grand donc après je trie pas
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" bcftools view -h {input.vcf} | grep "^##contig" | sed 's/.*ID=\([^,]*\),length=\([0-9]*\).*/\1\t\2/' | awk '$1!="Z" && $1!="W"' | sort -k2,2nr | head -n 10 | cut -f1 > {output} """ # trie par taille de chromosome mais exclu les chroms sexuels (Z ou W)
+#         r""" bcftools view -h {input.vcf} | grep "^##contig" | sed 's/.*ID=\([^,]*\),length=\([0-9]*\).*/\1\t\2/' | sort -k2,2nr | tail -n +10 | head -n 10 | cut -f1 > {output} """ # pour prendre les chrom de 10 à 20
+
+rule extract_top10contigs_to_vcf_chr:
+    input:
+        vcf="vcf_filtered/{species}.var.biallelic.fmiss80.renamed.vcf.gz",
+        vcf_csi = "vcf_filtered/{species}.var.biallelic.fmiss80.renamed.vcf.gz.csi",
+        contig_list="smc/{species}/{species}.top10_contigs.txt"
+#        contig_list="smc/{species}/{species}.top10-20_contigs.txt"
+    output:
+        expand("vcf_chr/{species}/{species}_chr{num:02d}.vcf.gz", species="{species}", num=range(1,11))
+    params:
+        oar_walltime="12:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ i=1 ;"""
+        r""" while read line ; do bcftools view -r $line -o vcf_chr/{wildcards.species}/{wildcards.species}_chr$(printf "%02d" $i).vcf.gz {input.vcf} ; i=$((i+1)) ; done < {input.contig_list};"""
+
+rule index_vcf:
+    input:
+        vcf="vcf_chr/{species}/{species}_{chr}.vcf.gz"
+    output:
+        tbi="vcf_chr/{species}/{species}_{chr}.vcf.gz.csi"
+    params:
+        oar_walltime="00:30:00",
+        oar_resources="nodes=1/core=1"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools index {input.vcf} """
+
+def get_smc_files(wildcards):
+    dists = open(f"pca/{wildcards.species}/{wildcards.species}.{wildcards.Pop}.selected_IID.txt").read().splitlines()[:5]
+    return expand(
+        "smc/{species}.{Pop}/{species}.{Pop}_{chr}.{dist}.smc.gz",
+        species=wildcards.species,
+        Pop=wildcards.Pop,
+        chr=CHRS,
+        dist=dists
+    )
+
+rule vcf2smc:
+    input:
+        vcf="vcf_chr/{species}/{species}_{chr}.vcf.gz",
+        mask="mask/{species}/{species}.smc_mask.bed.gz",
+        list="smc/{species}/{species}.top10_contigs.txt",
+        samples="pca/{species}/{species}.{Pop}.selected_IID.txt"
+    output:
+        smc="smc/{species}.{Pop}/{species}.{Pop}_{chr}.{dist}.smc.gz"
+    params:
+        oar_walltime="10:00:00",
+        oar_resources="nodes=1/core=10"
+    wildcard_constraints:
+        chr="chr[0-9]+"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" Scaf=$(sed -n "$(echo {wildcards.chr} | sed 's/[^0-9]//g')p" {input.list}); """
+        """ echo $Scaf;"""
+        """ SAMPLES=$(paste -sd, {input.samples}) ;"""
+        r""" apptainer exec --bind "$PWD:/mnt" docker://terhorst/smcpp:latest smc++ vcf2smc -d {wildcards.dist} {wildcards.dist} --mask /mnt/{input.mask} /mnt/{input.vcf} /mnt/{output.smc} $Scaf {wildcards.Pop}:$SAMPLES """
+
+rule smcpp_estimate:
+    input:
+        smc=lambda wildcards: expand("smc/{species}.{Pop}/{species}.{Pop}_{chr}.{dist}.smc.gz", species=wildcards.species, Pop=wildcards.Pop, chr=CHROMS, dist=get_distinguished(wildcards.species, wildcards.Pop))
+    output:
+        model="estimate/{species}.{Pop}/model.final.json"
+    params:
+        oar_walltime="48:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        r""" apptainer exec --bind "$PWD:/mnt" docker://terhorst/smcpp:latest smc++ estimate -o /mnt/estimate/{wildcards.species}.{wildcards.Pop} --timepoints 1000000 10000000 --cores 10 2.9e-9 /mnt/{input.smc} """
+
+rule smcpp_plot:
+    input:
+        model="estimate/{species}.{Pop}/model.final.json"
+    output:
+        png="plot/{species}.{Pop}/Ne_{species}.{Pop}.png",
+        csv="plot/{species}.{Pop}/Ne_{species}.{Pop}.csv"
+    params:
+        oar_walltime="08:00:00",
+        oar_resources="nodes=1/core=10"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh;"""
+        """ conda activate snakemake_env ;"""
+        r""" apptainer exec --bind "$PWD:/mnt" docker://terhorst/smcpp:latest smc++ plot -c /mnt/{output.png} /mnt/{input.model} """
