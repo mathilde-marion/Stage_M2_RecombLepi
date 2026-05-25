@@ -14,28 +14,28 @@ L’objectif du projet est de caractériser les déterminants des paysages de re
 
 Les scripts sont organisés par type d’analyse, en cohérence avec les différentes sections du matériel et méthodes du rapport.
 
-- **Traitement_donnees_structure_pop**  
+- **bcftools_acp_smcpp**  
   Filtrage des variants (bcftools), analyses de structure des populations (ACP), inférences démographiques (SMC++) et préparation des données pour ReLERNN.
 
-- **Recombination_inference_ReLERNN**  
+- **relernn**  
   Inférence des taux de recombinaison à l’aide de ReLERNN.
 
-- **Sliding_windows_telomeres**  
+- **telomere_distance**  
   Analyse de l’organisation du taux de recombinaison le long des chromosomes (fenêtres glissantes et distance aux télomères).
 
-- **Recombination_distance_genes**  
+- **DistanceGene_RecombRate**  
   Analyse de la variation du taux de recombinaison en fonction de la distance aux gènes, avec tests par permutation.
 
-- **Recombination_GC_content**  
+- **GC_content**  
   Analyse de la relation entre recombinaison et contenu en GC.
 
-- **Recombination_conservation**  
+- **blast_synteny_conservation**  
   Identification de segments homologues par synténie et analyse de la conservation des taux de recombinaison entre espèces.
 
-- **Diversity_pi**  
+- **genetic_diversity_pi**  
   Estimation de la diversité génétique nucléotidique (π).
 
-- **Selection_piN_piS**  
+- **snpEff_piN_piS**  
   Analyse de l’efficacité de la sélection à partir du ratio πN/πS et de sa relation avec la recombinaison.
 
 ---
