@@ -1,0 +1,13 @@
+#!/bin/bash
+
+#OAR -n relernn_ant_car_bigChrom_withoutW_DemographyMask_hoyt
+#OAR -l /nodes=1/gpu=1, walltime=48:00:00
+#OAR -p gpumodel='H200'
+#OAR --stdout relernn_ant_car.POP1_bigChrom_withoutW_DemographyMaskKraken_1GPUH200_hoyt.out
+#OAR --stderr relernn_ant_car.POP1_bigChrom_withoutW_DemographyMaskKraken_1GPUH200_hoyt.err
+#OAR --project pr-drive-r
+
+source /applis/environments/mamba.sh
+conda activate relearnn-1.0.0_Mod
+
+/hoyt/PROJECTS/pr-drive-r/mariomat/run_relernn/ant_car.POP1/pipeline_ant_car.POP1_bigChrom_withoutW_DemographyMask.sh
