@@ -1,0 +1,159 @@
+##Snakefile ##
+###SNAKEFILE###
+# A LANCER DEPUIS : genomes_ref_annotations_blast
+
+from itertools import combinations
+
+with open("scripts/all_species.txt") as f:
+    SPECIES = [line.strip() for line in f if line.strip()]
+SPECIES_WITH_POP2 = [sp for sp in SPECIES if sp != "pie_nap"]
+
+GENES = glob_wildcards("ant_car/genes_fasta/{gene}.fasta").gene
+PROTEINS = glob_wildcards("ant_car/proteins_fasta/{protein}.protein.fasta").protein
+
+POP = ["POP1", "POP2"]
+
+# Construire la liste des (species, pop) valides
+SP_POP = [(sp, pop) for sp in SPECIES for pop in POP 
+          if not (sp == "pie_nap" and pop == "POP2")]
+
+# Paires sans doublon d'ordre
+SP_POP_PAIRS = [(sp1, pop1, sp2, pop2) 
+                for (sp1, pop1), (sp2, pop2) 
+                in combinations(sorted(SP_POP), 2)]
+
+P1_LIST  = [sp1  for sp1, pop1, sp2, pop2 in SP_POP_PAIRS]
+POP1_LIST = [pop1 for sp1, pop1, sp2, pop2 in SP_POP_PAIRS]
+P2_LIST  = [sp2  for sp1, pop1, sp2, pop2 in SP_POP_PAIRS]
+POP2_LIST = [pop2 for sp1, pop1, sp2, pop2 in SP_POP_PAIRS]
+
+rule all:
+    input:
+         expand("blast_db/{species}/{species}.nsq", species=SPECIES, protein=PROTEINS),
+         expand("blast_results/{species}/{protein}.blast.tsv", species=SPECIES, protein=PROTEINS),
+         expand("blast_best_hits/{species}/{species}.blast.best.tsv", species=SPECIES, protein=PROTEINS),
+         expand("blast_best_hits/{species}/{species}.step3_synteny_blocs.tsv", species=SPECIES),
+         expand("blast_best_hits/{species}/{species}.step2_synteny_pairs.tsv", species=SPECIES),
+         expand("blast_best_hits/{species}/{species}.step1c_nucl_coords.tsv", species=SPECIES),
+         expand("blast_best_hits/pairwise_recomb_pop_divergence_binomial.tsv", species=SPECIES),
+         expand("blast_best_hits/for_step4_snakemake/pairs_list.txt", species=SPECIES),
+         expand("blast_best_hits/for_step4_snakemake/recomb_list.txt", species=SPECIES),
+         expand("blast_best_hits/synteny_pairs/{p1}.{pop1}_VS_{p2}.{pop2}.pairs.tsv", zip, p1=P1_LIST, pop1=POP1_LIST, p2=P2_LIST, pop2=POP2_LIST),
+         expand("blast_best_hits/all_species_pop_homologous_pairs.tsv", species=SPECIES),
+         expand("blast_best_hits/bootstrap_pop_recomb_homologous_binomial.tsv", species=SPECIES),
+         expand("blast_best_hits/bootstrap_pop_recomb_quantile_homologous_binomial.tsv", species=SPECIES)
+
+
+rule make_db_blast:
+    input: 
+        fasta = "{species}/{species}.unmasked.fa.gz"
+    output:
+        db="blast_db/{species}/{species}.nsq"
+    shell:
+        """ makeblastdb -in {input.fasta} -dbtype nucl -out blast_db/{wildcards.species}/{wildcards.species} """
+
+rule tblastn_protein_gene:
+    input:
+        protein="ant_car/proteins_fasta/{protein}.protein.fasta",
+        db="blast_db/{species}/{species}.nsq"
+    output:
+        blast="blast_results/{species}/{protein}.blast.tsv"
+    shell:
+        """ tblastn -query {input.protein} -db blast_db/{wildcards.species}/{wildcards.species} -out {output.blast} -outfmt 6 """
+
+rule best_hits:
+    input:
+       lambda wildcards: [f"blast_results/{wildcards.species}/{g}.blast.tsv" for g in GENES]
+    output:
+        "blast_best_hits/{species}/{species}.blast.best.tsv"
+    params:
+        blast_dir="blast_results",
+        out_dir="blast_best_hits/{species}"
+    shell:
+        """ python scripts/get_best_hits_blast_snakemake.py {params.blast_dir} {params.out_dir} {wildcards.species} """
+
+rule synteny_pipeline_step1:
+    input:
+        blast="blast_best_hits/{species}/{species}.blast.best.tsv",
+        fasta_dir="ant_car/genes_fasta" 
+    output:
+        "blast_best_hits/{species}/{species}.step1c_nucl_coords.tsv"
+    shell:
+        "python scripts/synteny_step1_snakemake.py {input.blast} {input.fasta_dir} {output}"
+
+rule synteny_step2:
+    input:
+        "blast_best_hits/{species}/{species}.step1c_nucl_coords.tsv"
+    output:
+        "blast_best_hits/{species}/{species}.step2_synteny_pairs.tsv"
+    shell:
+        "python scripts/synteny_step2_snakemake.py {input} {output}"
+
+rule synteny_step3:
+    input:
+        "blast_best_hits/{species}/{species}.step2_synteny_pairs.tsv"
+    output:
+        "blast_best_hits/{species}/{species}.step3_synteny_blocs.tsv"
+    shell:
+        "python scripts/synteny_step3_snakemake.py {input} {output}"
+
+rule prepare_step4_inputs:
+    input:
+        pairs=expand("blast_best_hits/{species}/{species}.step2_synteny_pairs.tsv", species=SPECIES),
+        recomb=[f"../OutputRelernnCluster/{sp}.var.biallelic.fmiss80.renamed.{pop}.PREDICT.BSCORRECTED.txt" for sp, pop in SP_POP]
+    output:
+        pairs_list="blast_best_hits/for_step4_snakemake/pairs_list.txt",
+        recomb_list="blast_best_hits/for_step4_snakemake/recomb_list.txt"
+    run:
+        with open(output.pairs_list, "w") as f:
+            for sp in SPECIES:
+                f.write(f"{sp}\tblast_best_hits/{sp}/{sp}.step2_synteny_pairs.tsv\n")
+
+        with open(output.recomb_list, "w") as f:
+            for sp, pop in SP_POP:
+                f.write(f"{sp}\t{pop}\t../OutputRelernnCluster/{sp}.var.biallelic.fmiss80.renamed.{pop}.quantiles.tsv\n")
+
+rule synteny_step4_compare_species:
+    input:
+        pairs_list="blast_best_hits/for_step4_snakemake/pairs_list.txt",
+        recomb_list="blast_best_hits/for_step4_snakemake/recomb_list.txt"
+    output:
+        "blast_best_hits/synteny_pairs/{p1}.{pop1}_VS_{p2}.{pop2}.pairs.tsv"
+    params:
+        outdir="blast_best_hits/synteny_pairs"
+    shell:
+        """ python scripts/synteny_step4_snakemake.py {input.pairs_list} {input.recomb_list} {params.outdir} {wildcards.p1} {wildcards.pop1} {wildcards.p2} {wildcards.pop2} """
+
+rule step5_merge_all_species_pairs:
+    input:
+        pairs_files = expand("blast_best_hits/synteny_pairs/{p1}.{pop1}_VS_{p2}.{pop2}.pairs.tsv",zip, p1=P1_LIST, pop1=POP1_LIST, p2=P2_LIST, pop2=POP2_LIST)
+    output:
+        merged_file = "blast_best_hits/all_species_pop_homologous_pairs.tsv"
+    shell:
+        """ python scripts/synteny_step5_snakemake.py {input.pairs_files} {output.merged_file} """
+
+rule step6_bootstrap_recomb:
+    input:
+        "blast_best_hits/all_species_pop_homologous_pairs.tsv"
+    output:
+        "blast_best_hits/bootstrap_pop_recomb_homologous_binomial.tsv"
+    shell:
+        """ python scripts/synteny_step6_bootstrap1000_snakemake.py {input} {output} """
+
+rule step6_bootstrap_recomb_with_quantile:
+    input:
+        "blast_best_hits/all_species_pop_homologous_pairs.tsv"
+    output:
+        "blast_best_hits/bootstrap_pop_recomb_quantile_homologous_binomial.tsv"
+    shell:
+        """ python scripts/synteny_step6_bootstrap1000_with_quantile_snakemake.py {input} {output} """
+
+rule pairwise_divergence:
+    input:
+        recomb="blast_best_hits/bootstrap_pop_recomb_homologous_binomial.tsv",
+        tree="../phylogeny/subset_tree_13sp.tre"
+    output:
+        "blast_best_hits/pairwise_recomb_pop_divergence_binomial.tsv"
+    shell:
+        """python scripts/time_divergence_recomb_pairwise_pop_binomial_snakemake.py --input {input.recomb} --tree {input.tree} --output {output} """
+
