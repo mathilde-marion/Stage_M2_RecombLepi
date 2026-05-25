@@ -1,0 +1,12 @@
+lys_bel
+ito_sal
+pie_nap
+hel_num
+hel_tim
+hel_cyd
+hel_mel
+pap_mac
+pap_hos
+mel_pho
+mel_gal
+ant_car
