@@ -1,0 +1,62 @@
+## Snakefile
+
+#SPECIES = ["lys_bel", "ito_sal", "mel_pho", "pap_hos", "pap_mac", "pie_nap", "hel_mel", "hel_cyd", "hel_tim", "hel_num"]
+SPECIES = ["lys_bel", "ito_sal", "mel_pho", "pap_hos", "pap_mac", "hel_mel", "hel_cyd", "hel_tim", "hel_num", "mel_pho", "mel_gal", "ant_car", "pie_nap.WITHOUT_OUTLIERS"]
+
+POP = ["POP1", "POP2"]
+
+rule all:
+    input:
+        expand("{species}_{Pop}.stats.txt", species=SPECIES, Pop=POP),
+        expand("{species}_{Pop}.sites.pi", species=SPECIES, Pop=POP),
+        expand("{species}_{Pop}.windowed.pi", species=SPECIES, Pop=POP),
+        expand("summary_mean_pi_recomb.tsv", species=SPECIES, Pop=POP)
+
+rule bcftools_stats:
+    input:
+        vcf="../vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz"
+    output:
+        "{species}_{Pop}.stats.txt"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=5"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ bcftools stats {input.vcf} > {output} """
+
+rule bcftools_stats_per_windows:
+    input:
+        vcf="../vcf_pop/{species}.var.biallelic.fmiss80.renamed.{Pop}.vcf.gz"
+    output:
+        "{species}_{Pop}.windowed.pi",
+        "{species}_{Pop}.sites.pi"
+    params:
+        oar_walltime="24:00:00",
+        oar_resources="nodes=1/core=5",
+        outprefix="{species}_{Pop}"
+    shell:
+        """ set +u ;"""
+        """ source /applis/site/guix-start.sh ;"""
+        """ source /applis/environments/mamba.sh ;"""
+        """ conda activate snakemake_env ;"""
+        """ vcftools --gzvcf {input.vcf} --window-pi 10000 --out ../bcftools_stats/{params.outprefix} ;"""
+        """ vcftools --gzvcf {input.vcf} --site-pi --out ../bcftools_stats/{params.outprefix} """
+
+rule summary_pi_recomb:
+    input:
+        pi=expand("{species}_{Pop}.windowed.pi", species=SPECIES, Pop=POP),
+        recomb=expand("../ResultsReLERNN/{species}.var.biallelic.fmiss80.renamed.{Pop}.quantiles.tsv", species=SPECIES, Pop=POP)
+    output:
+        "summary_mean_pi_recomb.tsv"
+    params:
+        oar_walltime="02:00:00",
+        oar_resources="nodes=1/core=2"
+    shell:
+        """ set +u ; """
+        """ source /applis/site/guix-start.sh ; """
+        """ source /applis/environments/mamba.sh ; """
+        """ conda activate snakemake_env ; """
+        """  python aggregate_pi_recomb_rate.py --pi {input.pi} --recomb {input.recomb} -o {output} """
